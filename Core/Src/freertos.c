@@ -35,7 +35,6 @@
 #include <rmw_microros/rmw_microros.h>
 
 #include <std_msgs/msg/int32.h>
-#include <example_interfaces/srv/add_two_ints.h>
 
 #include "usart.h"
 /* USER CODE END Includes */
@@ -58,33 +57,6 @@ typedef StaticTask_t osStaticThreadDef_t;
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
-//osThreadId_t publisherTaskHandle;
-//uint32_t publisherTaskBuffer[ 500 ];
-//osStaticThreadDef_t publisherTaskControlBlock;
-//const osThreadAttr_t publisherTask_attributes = {
-//  .name = "publisherTask",
-//  .cb_mem = &publisherTaskControlBlock,
-//  .cb_size = sizeof(publisherTaskControlBlock),
-//  .stack_mem = &publisherTaskBuffer[0],
-//  .stack_size = sizeof(publisherTaskBuffer),
-//  .priority = (osPriority_t) osPriorityNormal,
-//};
-//
-//osThreadId_t another_publisherTaskHandle;
-//uint32_t another_publisherTaskBuffer[ 500 ];
-//osStaticThreadDef_t another_publisherTaskControlBlock;
-//const osThreadAttr_t another_publisherTask_attributes = {
-//  .name = "another_publisherTask",
-//  .cb_mem = &another_publisherTaskControlBlock,
-//  .cb_size = sizeof(another_publisherTaskControlBlock),
-//  .stack_mem = &another_publisherTaskBuffer[0],
-//  .stack_size = sizeof(another_publisherTaskBuffer),
-//  .priority = (osPriority_t) osPriorityNormal,
-//};
-
-//BaseType_t xReturned;
-//TaskHandle_t xHandle = NULL;
-
 
 /* USER CODE END Variables */
 /* Definitions for defaultTask */
@@ -184,6 +156,22 @@ void MX_FREERTOS_Init(void) {
 
 }
 
+
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Aborting.\n",__LINE__,(int)temp_rc); return 1;}}
+#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Continuing.\n",__LINE__,(int)temp_rc);}}
+
+
+rcl_subscription_t subscriber;
+rcl_publisher_t publisher;
+std_msgs__msg__Int32 msg;
+
+void subscription_callback(const void * msgin)
+{
+	const std_msgs__msg__Int32 * msg = (const std_msgs__msg__Int32 *)msgin;
+  RCSOFTCHECK(rcl_publish(&publisher, msg, NULL));
+	printf("Received: %d\n", msg->data);
+}
+
 /* USER CODE BEGIN Header_StartDefaultTask */
 /**
   * @brief  Function implementing the defaultTask thread.
@@ -195,71 +183,38 @@ void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN StartDefaultTask */
 
-  // micro-ROS app
+  rcl_allocator_t allocator = rcl_get_default_allocator();
+	rclc_support_t support;
 
-  std_msgs__msg__Int32 msg;
-  rclc_support_t support;
-  rcl_allocator_t allocator;
-  rcl_node_t node;
-  rcl_init_options_t init_options; // object for custom settings(DOMAIN ID = 1)
-  rclc_executor_t executor;  //executor for service
-  rcl_service_t service;  //custom service
+	// create init_options
+	RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
 
-  // Service message objects
-  example_interfaces__srv__AddTwoInts_Response response_msg;
-  example_interfaces__srv__AddTwoInts_Request request_msg;
+	// create node
+	rcl_node_t node;
+	RCCHECK(rclc_node_init_default(&node, "int32_subscriber_rclc", "", &support));
 
+	// create subscriber
+	RCCHECK(rclc_subscription_init_default(
+		&subscriber,
+		&node,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+		"input_topic"));
 
-  allocator = rcl_get_default_allocator();
+  RCCHECK(rclc_publisher_init_default(
+		&publisher,
+		&node,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+		"output_topic"));
 
-  init_options = rcl_get_zero_initialized_init_options();
-  rcl_init_options_init(&init_options, allocator);
-  rcl_init_options_set_domain_id(&init_options, 1);
+	// create executor
+	rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
+	RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
+	RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &msg, &subscription_callback, ON_NEW_DATA));
 
-  //create init_options with custom settings
-  rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
+  	rclc_executor_spin(&executor);
 
-  // create node
-  rclc_node_init_default(&node, "cubemx_node_service", "", &support);
-
-
-  executor = rclc_executor_get_zero_initialized_executor();
-  unsigned int num_handles = 1;  //handle only one service
-  rclc_executor_init(&executor, &support.context, num_handles, &allocator);
-
-  rclc_service_init_default(
-    &service,
-	&node,
-	ROSIDL_GET_SRV_TYPE_SUPPORT(example_interfaces, srv, AddTwoInts),
-	"/addtwoints");
-
-  // Function prototype:
-  void (* rclc_service_callback_t)(const void *, void *);
-
-  // Implementation service callback:
-  void service_callback(const void * request_msg, void * response_msg){
-    // Cast messages to expected types
-    example_interfaces__srv__AddTwoInts_Request * req_in =
-      (example_interfaces__srv__AddTwoInts_Request *) request_msg;
-    example_interfaces__srv__AddTwoInts_Response * res_in =
-      (example_interfaces__srv__AddTwoInts_Response *) response_msg;
-
-    // Handle request message and set the response message values
-    printf("Client requested sum of %d and %d.\n", (int) req_in->a, (int) req_in->b);
-    res_in->sum = req_in->a + req_in->b;
-  }
-
-  // Add server callback to the executor
-  rclc_executor_add_service(
-    &executor,
-	&service,
-	&request_msg,
-    &response_msg,
-	service_callback);
-
-
-//  //starting executor
-  rclc_executor_spin(&executor);
+	RCCHECK(rcl_subscription_fini(&subscriber, &node));
+	RCCHECK(rcl_node_fini(&node));
 
   while(1){
 
@@ -267,117 +222,3 @@ void StartDefaultTask(void *argument)
 
   /* USER CODE END StartDefaultTask */
 }
-
-/* Private application code --------------------------------------------------*/
-/* USER CODE BEGIN Application */
-//void StartAnotherPublisherTask(void *argument)
-//{
-//	  // micro-ROS app
-//
-//	  std_msgs__msg__Int32 msg2;
-//	  rclc_support_t support2;
-//	  rcl_allocator_t allocator2;
-//	  rcl_node_t node2;
-//	  rcl_init_options_t init_options2; // object for custom settings(DOMAIN ID = 1)
-//	  rcl_publisher_t publisher2;
-//
-//
-//	  allocator2 = rcl_get_default_allocator();
-//
-//	  init_options2 = rcl_get_zero_initialized_init_options();
-//	  rcl_init_options_init(&init_options2, allocator2);
-//	  rcl_init_options_set_domain_id(&init_options2, 1);
-//
-//	  //create init_options with custom settings
-//	  rclc_support_init_with_options(&support2, 0, NULL, &init_options2, &allocator2);
-//
-//	  // create node
-//	  rclc_node_init_default(&node2, "cubemx_node_another_publisher", "", &support2);
-//
-//	  // create publisher
-//	  rclc_publisher_init_default(
-//	    &publisher2,
-//	    &node2,
-//	    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-//	    "cubemx_another_publisher");
-//
-//	msg2.data = 0;
-//	while(1)
-//	  {
-//	    rcl_ret_t ret;
-//
-//	    ret = rcl_publish(&publisher2, &msg2, NULL);
-//	    if (ret != RCL_RET_OK)
-//	    {
-//	      printf("Error publishing (line %d)\n", __LINE__);
-//	    }
-//
-//	    msg2.data++;
-//	    osDelay(10);
-//	  }
-//}
-//
-//void StartPublisherTask(void *argument)
-//{
-//	  // micro-ROS app
-//
-//	  std_msgs__msg__Int32 msg;
-////	  std_msgs__msg__Int32 msg2;
-//	  rclc_support_t support;
-//	  rcl_allocator_t allocator;
-//	  rcl_node_t node1;
-////	  rcl_node_t node2;
-//	  rcl_init_options_t init_options; // object for custom settings(DOMAIN ID = 1)
-//	  rcl_publisher_t publisher1;
-////	  rcl_publisher_t publisher2;
-//
-//
-//	  allocator = rcl_get_default_allocator();
-//
-//	  init_options = rcl_get_zero_initialized_init_options();
-//	  rcl_init_options_init(&init_options, allocator);
-//	  rcl_init_options_set_domain_id(&init_options, 1);
-//
-//	  //create init_options with custom settings
-//	  rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
-//
-//	  // create node
-//	  rclc_node_init_default(&node1, "cubemx_node_publisher", "", &support);
-//
-//	  // create publisher
-//	  rclc_publisher_init_default(
-//	    &publisher1,
-//	    &node1,
-//	    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-//	    "cubemx_publisher");
-////
-////
-////	  // create node
-////	  rclc_node_init_default(&node2, "cubemx_node_another_publisher", "", &support);
-////
-////	  // create publisher
-////	  rclc_publisher_init_default(
-////	    &publisher2,
-////	    &node2,
-////	    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-////	    "cubemx_another_publisher");
-//
-//
-//	msg.data = 0;
-//	while(1)
-//	  {
-//	    rcl_ret_t ret;
-////	    msg2.data = 2;
-//
-//	    ret = rcl_publish(&publisher1, &msg, NULL);
-////	    ret = rcl_publish(&publisher2, &msg2, NULL);
-//	    if (ret != RCL_RET_OK)
-//	    {
-//	      printf("Error publishing (line %d)\n", __LINE__);
-//	    }
-//
-//	    msg.data++;
-//	    osDelay(10);
-//	  }
-//}
-/* USER CODE END Application */
