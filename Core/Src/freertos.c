@@ -160,10 +160,13 @@ void MX_FREERTOS_Init(void) {
 #define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Aborting.\n",__LINE__,(int)temp_rc); return 1;}}
 #define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){printf("Failed status on line %d: %d. Continuing.\n",__LINE__,(int)temp_rc);}}
 
+const unsigned int timer_period = RCL_MS_TO_NS(20);
 
 rcl_subscription_t subscriber;
 rcl_publisher_t publisher;
+rcl_publisher_t publisher_timer;
 std_msgs__msg__Int32 msg;
+rcl_timer_t timer;
 
 void subscription_callback(const void * msgin)
 {
@@ -171,6 +174,15 @@ void subscription_callback(const void * msgin)
   RCSOFTCHECK(rcl_publish(&publisher, msg, NULL));
 	printf("Received: %d\n", msg->data);
 }
+
+
+void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
+  std_msgs__msg__Int32 msg;
+  msg.data = 34;
+  RCSOFTCHECK(rcl_publish(&publisher_timer, &msg, NULL));
+	printf("timer_pub: %d\n", msg.data);
+}
+
 
 /* USER CODE BEGIN Header_StartDefaultTask */
 /**
@@ -193,6 +205,8 @@ void StartDefaultTask(void *argument)
 	rcl_node_t node;
 	RCCHECK(rclc_node_init_default(&node, "int32_subscriber_rclc", "", &support));
 
+  RCCHECK(rclc_timer_init_default(&timer, &support, timer_period, timer_callback));
+
 	// create subscriber
 	RCCHECK(rclc_subscription_init_default(
 		&subscriber,
@@ -206,14 +220,22 @@ void StartDefaultTask(void *argument)
 		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
 		"output_topic"));
 
+  RCCHECK(rclc_publisher_init_default(
+		&publisher_timer,
+		&node,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+		"timer_topic"));
+
 	// create executor
 	rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
-	RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
+	RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
 	RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &msg, &subscription_callback, ON_NEW_DATA));
+  RCCHECK(rclc_executor_add_timer(&executor, &timer));
 
   	rclc_executor_spin(&executor);
 
 	RCCHECK(rcl_subscription_fini(&subscriber, &node));
+  RCCHECK(rcl_timer_fini(&timer));
 	RCCHECK(rcl_node_fini(&node));
 
   while(1){
